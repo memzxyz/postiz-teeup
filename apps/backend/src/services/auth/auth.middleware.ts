@@ -39,14 +39,49 @@ export class AuthMiddleware implements NestMiddleware {
       // Verify the JWT signature only. Never trust authorization-relevant
       // claims (id, isSuperAdmin, activated) from the token body — always
       // re-resolve the user from the database using the id.
-      const payload = AuthService.verifyJWT(auth) as User | null;
-      const orgHeader = req.cookies.showorg || req.headers.showorg;
+      const bearer = req.headers.authorization?.startsWith('Bearer ')
+        ? req.headers.authorization.slice(7)
+        : undefined;
+      const token = bearer || auth;
 
-      if (!payload?.id) {
+      if (!token) {
         throw new HttpForbiddenException();
       }
 
-      let user = (await this._userService.getUserById(payload.id)) as User | null;
+      let payload: User | null = null;
+      let user: User | null = null;
+      const orgHeader = req.cookies.showorg || req.headers.showorg;
+
+      // Try Postiz JWT verification first
+      try {
+        payload = AuthService.verifyJWT(token) as User | null;
+      } catch {
+        payload = null;
+      }
+
+      if (payload?.id) {
+        user = (await this._userService.getUserById(payload.id)) as User | null;
+      }
+
+      // Fallback to Supabase JWT verification
+      if (!user && bearer) {
+        const supabaseJwksUrl = process.env.SUPABASE_JWKS_URL;
+        if (supabaseJwksUrl) {
+          try {
+            const JWKS = createRemoteJWKSet(new URL(supabaseJwksUrl));
+            const { payload: supabasePayload } = await jwtVerify(bearer, JWKS, {
+              algorithms: ["RS256"],
+            });
+
+            const email = supabasePayload.email as string | undefined;
+            if (email) {
+              user = (await this._userService.getUserByEmail(email)) as User | null;
+            }
+          } catch {
+            // Supabase verification failed, ignore
+          }
+        }
+      }
 
       if (!user) {
         throw new HttpForbiddenException();
@@ -112,3 +147,6 @@ export class AuthMiddleware implements NestMiddleware {
     next();
   }
 }
+
+
+
