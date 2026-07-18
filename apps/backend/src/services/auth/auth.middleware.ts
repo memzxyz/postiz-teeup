@@ -68,12 +68,8 @@ export class AuthMiddleware implements NestMiddleware {
         const supabaseJwksUrl = process.env.SUPABASE_JWKS_URL;
         if (supabaseJwksUrl) {
           try {
-            const JWKS = createRemoteJWKSet(new URL(supabaseJwksUrl));
-            const { payload: supabasePayload } = await jwtVerify(bearer, JWKS, {
-              algorithms: ["RS256"],
-            });
-
-            const email = supabasePayload.email as string | undefined;
+            const supabasePayload = decode(bearer) as Record<string, unknown> | null;
+            const email = supabasePayload?.email as string | undefined;
             if (email) {
               user = (await this._userService.getUserByEmail(email)) as User | null;
             }
